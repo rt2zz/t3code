@@ -17,6 +17,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
+import { makeExternalMcpResolver } from "./ExternalMcpAccess.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -44,7 +45,8 @@ import {
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
     error: "invalid_mcp_credential",
-    message: "A valid provider-scoped MCP bearer credential is required.",
+    message:
+      "A valid MCP bearer credential is required. External clients must also supply X-T3-Thread-Id.",
   },
   {
     status: 401,
@@ -81,22 +83,31 @@ export const normalizeMcpHttpResponse = (
     : response;
 };
 
-const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
-  Effect.map((registry): McpAuthMiddleware =>
-    Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
+const makeMcpAuthMiddleware = Effect.gen(function* () {
+  const registry = yield* McpSessionRegistry.McpSessionRegistry;
+  const resolveExternal = yield* makeExternalMcpResolver;
+  const middleware: McpAuthMiddleware = Effect.fn("McpHttpServer.authenticateRequest")(
+    function* (httpEffect) {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const authorization = request.headers.authorization;
       const token =
         authorization?.startsWith("Bearer ") === true
           ? authorization.slice("Bearer ".length).trim()
           : "";
-      const invocation = yield* registry.resolve(token);
+      const invocation = yield* request.headers["x-t3-thread-id"] !== undefined
+        ? resolveExternal(request).pipe(Effect.orElseSucceed(() => undefined))
+        : registry.resolve(token);
       if (!invocation) {
         // Without this the only symptom of a dead credential is the agent
         // quietly losing the whole `t3-code` toolkit for the rest of its
         // session, with nothing on the server to explain why.
         yield* Effect.logWarning("rejected MCP request with an unusable credential", {
-          reason: token.length === 0 ? "missing_bearer_token" : "unknown_or_expired_token",
+          reason:
+            request.headers["x-t3-thread-id"] !== undefined
+              ? "external_access_denied"
+              : token.length === 0
+                ? "missing_bearer_token"
+                : "unknown_or_expired_token",
         });
         return unauthorized;
       }
@@ -104,14 +115,17 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
         Effect.map(normalizeMcpHttpResponse),
       );
-    }),
-  ),
-  Effect.withSpan("McpHttpServer.makeAuthMiddleware"),
-);
+    },
+  );
+  return middleware;
+}).pipe(Effect.withSpan("McpHttpServer.makeAuthMiddleware"));
 
 const McpAuthMiddlewareLive = HttpRouter.middleware<{
   provides: McpInvocationContext.McpInvocationContext;
 }>()(makeMcpAuthMiddleware).layer;
+
+/** Exposed for authentication boundary tests. */
+export const __testing = { makeMcpAuthMiddleware };
 
 /**
  * Claude Code drops every MCP result above 25k tokens (~100 KB of text) and

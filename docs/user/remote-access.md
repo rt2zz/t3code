@@ -198,3 +198,31 @@ history, and saved connections are kept, and you keep working through pairing, T
 
 Switch **Local environment** back on in the same place to restart with your previous local
 settings.
+
+## Connect an external agent to a thread's tools
+
+An agent running outside T3 Code can use the environment's MCP tools in an existing
+thread. Configure a Streamable HTTP MCP connection to the server's `/mcp` endpoint
+with these headers:
+
+```text
+Authorization: Bearer <environment-access-token>
+X-T3-Thread-Id: <thread-id>
+```
+
+On the server host, issue an access token with
+`t3 auth session issue --label chief --ttl 30d --token-only`. Use the same T3 home
+as the running server. The token needs `orchestration:operate`; the CLI currently
+issues administrative access. Selecting a thread controls where tools act, but
+does not restrict the token's access to that thread.
+
+No T3-managed provider session is required. The connection keeps working after
+server restarts by reconnecting with the same headers. Revoking or expiring the
+client token removes MCP access too. Pinning the thread is optional and has no
+effect on authentication.
+
+Browser and device tools follow the selected project's agent-access settings.
+Browser previews also require a connected desktop client capable of hosting them.
+Serve HTML artifacts at a URL that the desktop client can reach, then open that
+URL with `preview_open`. This MCP connection exposes the existing browser,
+device, and pull-request tools; it does not add chat-posting or notification tools.

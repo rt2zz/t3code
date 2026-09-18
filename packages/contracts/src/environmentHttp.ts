@@ -59,6 +59,12 @@ const OptionalBearerHeaders = Schema.Struct({
   dpop: Schema.optionalKey(Schema.String),
 });
 
+/** Selects a thread when an external MCP client uses environment authentication. */
+export const ExternalMcpHeaders = Schema.Struct({
+  authorization: TrimmedNonEmptyString,
+  "x-t3-thread-id": ThreadId,
+});
+
 const OptionalDpopProofHeaders = Schema.Struct({
   dpop: Schema.optionalKey(Schema.String),
 });
