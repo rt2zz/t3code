@@ -29,6 +29,7 @@ import {
   MAX_GLASS_OPACITY,
   MAX_INTERFACE_FONT_SIZE,
   MAX_PANEL_ANIMATION_DURATION_MS,
+  MAX_CHAT_FONT_SIZE,
   MAX_PROMPT_FONT_SIZE,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
@@ -37,6 +38,7 @@ import {
   MIN_GLASS_OPACITY,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PANEL_ANIMATION_DURATION_MS,
+  MIN_CHAT_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ResponseStreamingMode,
@@ -128,7 +130,12 @@ import {
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../../appearanceFonts";
-import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
+import {
+  ChatTextPreview,
+  CodeFontPreview,
+  PromptFontPreview,
+  TerminalFontPreview,
+} from "./SettingsFontPreviews";
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
 import {
   NumberField,
@@ -661,6 +668,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.fontFamilyComposer,
       settings.fontFamilySans,
       settings.fontFamilyTerminal,
+      settings.fontSizeChat,
       settings.fontSizeCode,
       settings.fontSizeInterface,
       settings.fontSizePrompt,
@@ -792,6 +800,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       fontFamilyTerminal: DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal,
       fontSizeInterface: DEFAULT_UNIFIED_SETTINGS.fontSizeInterface,
       fontSizePrompt: DEFAULT_UNIFIED_SETTINGS.fontSizePrompt,
+      fontSizeChat: DEFAULT_UNIFIED_SETTINGS.fontSizeChat,
       fontSizeCode: DEFAULT_UNIFIED_SETTINGS.fontSizeCode,
       fontSizeTerminal: DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal,
       browserDefaultViewport: DEFAULT_UNIFIED_SETTINGS.browserDefaultViewport,
@@ -1522,6 +1531,38 @@ function PromptFontRow() {
   );
 }
 
+/** Size only: chat text renders in the interface font family. */
+function ChatTextSizeRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("chat-text-size")}
+      description="Messages in the conversation, independent of the interface size."
+      resetAction={
+        settings.fontSizeChat !== DEFAULT_UNIFIED_SETTINGS.fontSizeChat ? (
+          <SettingResetButton
+            label="chat text size"
+            onClick={() => updateSettings({ fontSizeChat: DEFAULT_UNIFIED_SETTINGS.fontSizeChat })}
+          />
+        ) : null
+      }
+      control={
+        <FontSizeSelect
+          label="Chat text size"
+          min={MIN_CHAT_FONT_SIZE}
+          max={MAX_CHAT_FONT_SIZE}
+          value={settings.fontSizeChat}
+          defaultValue={DEFAULT_UNIFIED_SETTINGS.fontSizeChat}
+          onChange={(fontSizeChat) => updateSettings({ fontSizeChat })}
+        />
+      }
+    >
+      <ChatTextPreview />
+    </SettingsRow>
+  );
+}
+
 function CodeFontRow({
   title,
   description = "Code blocks, diffs, and file previews.",
@@ -1663,6 +1704,7 @@ function FontSettingsGroup() {
   return (
     <>
       <InterfaceFontRow />
+      <ChatTextSizeRow />
       <PromptFontRow />
       <CodeFontRow />
       <TerminalFontRow />
@@ -1681,6 +1723,7 @@ function SimpleFontRows() {
   return (
     <>
       <InterfaceFontRow preview={<PromptFontPreview />} />
+      <ChatTextSizeRow />
       <CodeFontRow
         title="Monospace font"
         description="Code blocks, diffs, file previews, and the terminal."
@@ -1761,6 +1804,41 @@ function TypographySection() {
   );
 }
 
+interface FontSizeOptions {
+  label: string;
+  min: number;
+  max: number;
+  value: number;
+  defaultValue: number;
+  onChange: (v: number) => void;
+}
+
+function FontSizeSelect({ label, min, max, value, onChange }: FontSizeOptions) {
+  return (
+    <Select
+      value={String(value)}
+      onValueChange={(next) => {
+        if (typeof next !== "string") return;
+        const parsed = Number(next);
+        if (Number.isInteger(parsed) && parsed >= min && parsed <= max) {
+          onChange(parsed);
+        }
+      }}
+    >
+      <SelectTrigger size="sm" className="w-22 shrink-0" aria-label={label}>
+        <SelectValue>{value} px</SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="end" alignItemWithTrigger={false}>
+        {Array.from({ length: max - min + 1 }, (_, index) => min + index).map((px) => (
+          <SelectItem hideIndicator key={px} value={String(px)}>
+            {px} px
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
+}
+
 function FontFamilySettingsRow({
   id,
   title,
@@ -1786,14 +1864,7 @@ function FontFamilySettingsRow({
   onValueChange: (value: string) => void;
   onReset: () => void;
   requireMonospace?: boolean;
-  size: {
-    label: string;
-    min: number;
-    max: number;
-    value: number;
-    defaultValue: number;
-    onChange: (v: number) => void;
-  };
+  size: FontSizeOptions;
 }) {
   const trimmed = value.trim();
   // The fallback input edits a draft; the preference only commits once typing
@@ -1921,29 +1992,7 @@ function FontFamilySettingsRow({
   const control = (
     <div className="flex w-full items-center gap-2 sm:w-auto">
       <div className="min-w-0 flex-1 sm:w-44 sm:flex-none">{familyControl}</div>
-      <Select
-        value={String(size.value)}
-        onValueChange={(next) => {
-          if (typeof next !== "string") return;
-          const parsed = Number(next);
-          if (Number.isInteger(parsed) && parsed >= size.min && parsed <= size.max) {
-            size.onChange(parsed);
-          }
-        }}
-      >
-        <SelectTrigger size="sm" className="w-22 shrink-0" aria-label={size.label}>
-          <SelectValue>{size.value} px</SelectValue>
-        </SelectTrigger>
-        <SelectPopup align="end" alignItemWithTrigger={false}>
-          {Array.from({ length: size.max - size.min + 1 }, (_, index) => size.min + index).map(
-            (px) => (
-              <SelectItem hideIndicator key={px} value={String(px)}>
-                {px} px
-              </SelectItem>
-            ),
-          )}
-        </SelectPopup>
-      </Select>
+      <FontSizeSelect {...size} />
     </div>
   );
   return (

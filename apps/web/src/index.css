@@ -1655,7 +1655,9 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
-/* Chat markdown rendering */
+/* Chat markdown rendering. Text sizes are em so they follow the chat font
+   size preference (--font-size-chat) rather than the interface root size;
+   the ratios reproduce the previous rem sizes at the 14px default. */
 
 .chat-markdown > :first-child {
   margin-top: 0;
@@ -1687,21 +1689,21 @@ code {
 }
 
 .chat-markdown h1 {
-  font-size: 1.25rem;
+  font-size: 1.4286em;
 }
 
 .chat-markdown h2 {
-  font-size: 1.125rem;
+  font-size: 1.2857em;
 }
 
 .chat-markdown h3 {
-  font-size: 1rem;
+  font-size: 1.1429em;
 }
 
 .chat-markdown h4,
 .chat-markdown h5,
 .chat-markdown h6 {
-  font-size: 0.875rem;
+  font-size: 1em;
 }
 
 .chat-markdown h6 {
@@ -1792,7 +1794,7 @@ code {
   border-top: 1px solid var(--contrast-border);
   padding-top: 0.75rem;
   color: var(--contrast-muted-foreground);
-  font-size: 0.75rem;
+  font-size: 0.8571em;
 }
 
 .chat-markdown section[data-footnotes] ol {

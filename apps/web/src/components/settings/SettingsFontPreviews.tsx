@@ -1,5 +1,6 @@
 import { preloadPatchFile } from "@pierre/diffs/ssr";
 import { useCallback, useEffect, useRef, useState } from "react";
+import ChatMarkdown from "../ChatMarkdown";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { EMPTY_COMPOSER_CONTEXT_RECORDS } from "../composerContextPresentation";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
@@ -26,6 +27,22 @@ const PROMPT_PREVIEW_TEXT =
   "[SettingsPanels.tsx](apps/web/src/components/settings/SettingsPanels.tsx) before shipping.";
 
 function noop() {}
+
+const CHAT_PREVIEW_TEXT = [
+  "### Flaky test fixed",
+  "",
+  "The `surface.test.ts` failure came from a resize racing the first paint. " +
+    "The test now waits for the renderer's ready receipt before measuring.",
+].join("\n");
+
+/** Real chat markdown, so the heading-to-body ratio shows at the chosen size. */
+export function ChatTextPreview() {
+  return (
+    <div className="mt-1 mb-2 rounded-lg border border-border bg-background px-3 py-2">
+      <ChatMarkdown text={CHAT_PREVIEW_TEXT} cwd={undefined} />
+    </div>
+  );
+}
 
 /** A live composer editor: type in it to feel the family and size. */
 export function PromptFontPreview() {
