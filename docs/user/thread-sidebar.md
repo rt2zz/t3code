@@ -182,6 +182,14 @@ and copying a thread reference. A copied reference uses the thread's pull reques
 link when available, otherwise its thread ID. See [keybindings](./keybindings.md)
 for custom configuration.
 
+### Focus on a group of projects
+
+On web and desktop, the folder button beside the sidebar search limits the thread
+list to one project. To switch between several projects at once, choose **New
+workgroup** at the bottom of that menu, name it, and check its projects. Picking
+the workgroup then shows only threads from those projects; **All projects**
+shows everything again. Workgroups are saved on the device where you create them.
+
 ## Inspect agent work
 
 **Limited** means the provider stopped on a usage or rate limit. The conversation

@@ -70,6 +70,7 @@ import {
   EyeIcon,
   FolderIcon,
   GitBranchIcon,
+  LayersIcon,
   MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
@@ -127,7 +128,14 @@ import {
   projectGroupsSpanEnvironments,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import {
+  legacyProjectCwdPreferenceKey,
+  type SidebarWorkgroup,
+  sidebarWorkgroupIdFromScopeKey,
+  sidebarWorkgroupScopeKey,
+  useUiStateStore,
+} from "../uiStateStore";
+import { SidebarWorkgroupDialog } from "./SidebarWorkgroupDialog";
 import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
@@ -2530,17 +2538,34 @@ export default function Sidebar() {
   // app restarts keep it.
   const projectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
+  // Workgroups are named project sets; they head the scope menu so switching
+  // between them is one pick, like switching to a single project.
+  const workgroups = useUiStateStore((store) => store.sidebarWorkgroups);
+  const [workgroupDialog, setWorkgroupDialog] = useState<{
+    readonly workgroup: SidebarWorkgroup | null;
+  } | null>(null);
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
   const projectScopeItems = useMemo(
     () => [
       { value: "all", label: "All projects" },
+      ...workgroups.map((workgroup) => ({
+        value: sidebarWorkgroupScopeKey(workgroup.id),
+        label: workgroup.name,
+      })),
       ...projectGroups.map((project) => ({
         value: project.projectKey,
         label: project.displayName,
       })),
     ],
-    [projectGroups],
+    [projectGroups, workgroups],
+  );
+  const workgroupByScopeKey = useMemo(
+    () =>
+      new Map(
+        workgroups.map((workgroup) => [sidebarWorkgroupScopeKey(workgroup.id), workgroup] as const),
+      ),
+    [workgroups],
   );
   // Same-named projects on two machines are only told apart by where they
   // live, so rows on another machine carry its icon once the catalog spans
@@ -2587,26 +2612,54 @@ export default function Sidebar() {
         : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
     [projectGroups, projectScopeKey],
   );
-  const scopedProjectKeys = useMemo(
+  const scopedWorkgroupId = sidebarWorkgroupIdFromScopeKey(projectScopeKey);
+  const scopedWorkgroup = useMemo(
     () =>
-      scopedProjectGroup === null
+      scopedWorkgroupId === null
         ? null
-        : new Set(
-            scopedProjectGroup.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
-          ),
-    [scopedProjectGroup],
+        : (workgroups.find((workgroup) => workgroup.id === scopedWorkgroupId) ?? null),
+    [scopedWorkgroupId, workgroups],
   );
+  const scopedProjectKeys = useMemo(() => {
+    const scopedGroups =
+      scopedWorkgroup !== null
+        ? projectGroups.filter((project) =>
+            scopedWorkgroup.projectKeys.includes(project.projectKey),
+          )
+        : scopedProjectGroup !== null
+          ? [scopedProjectGroup]
+          : null;
+    if (scopedGroups === null) return null;
+    return new Set(
+      scopedGroups.flatMap((project) =>
+        project.memberProjectRefs.map(
+          (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+        ),
+      ),
+    );
+  }, [projectGroups, scopedProjectGroup, scopedWorkgroup]);
   // A persisted scope whose project is gone falls back to all projects, but
   // only after every catalog environment has a live project snapshot. Cached
   // or disconnected environments cannot establish that the project is gone.
+  // Workgroups are local, so a missing one resets right away; one whose
+  // projects are all gone stays selected and shows its empty state.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   useEffect(() => {
-    if (projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null) {
+    const scopeIsGone =
+      scopedWorkgroupId !== null
+        ? scopedWorkgroup === null
+        : projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null;
+    if (scopeIsGone) {
       setProjectScopeKey(null);
     }
-  }, [allProjectSnapshotsReady, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
+  }, [
+    allProjectSnapshotsReady,
+    projectScopeKey,
+    scopedProjectGroup,
+    scopedWorkgroup,
+    scopedWorkgroupId,
+    setProjectScopeKey,
+  ]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
@@ -2669,6 +2722,19 @@ export default function Sidebar() {
       openProjectSettings(projectGroup);
     },
     [openProjectSettings],
+  );
+  const handleEditWorkgroup = useCallback(
+    (
+      event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLInputElement>,
+      workgroup: SidebarWorkgroup | null,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      suppressNextScopeChangeRef.current = true;
+      dispatchProjectScopeMenu({ type: "project-settings-opened" });
+      setWorkgroupDialog({ workgroup });
+    },
+    [],
   );
 
   // Keep a dropped row at its destination while its server applies the
@@ -4866,14 +4932,18 @@ export default function Sidebar() {
                     render={
                       <SidebarHeaderIconButton
                         label={
-                          scopedProjectGroup
-                            ? `Filter threads by project: ${scopedProjectGroup.displayName}`
-                            : "Filter threads by project"
+                          scopedWorkgroup
+                            ? `Filter threads by project: ${scopedWorkgroup.name}`
+                            : scopedProjectGroup
+                              ? `Filter threads by project: ${scopedProjectGroup.displayName}`
+                              : "Filter threads by project"
                         }
                       />
                     }
                   >
-                    {scopedProjectGroup ? (
+                    {scopedWorkgroup ? (
+                      <LayersIcon className="size-4" />
+                    ) : scopedProjectGroup ? (
                       // Wrapped so the button's direct-child svg color rule cannot override
                       // a project's own icon color.
                       <span className="flex shrink-0">
@@ -4910,6 +4980,11 @@ export default function Sidebar() {
                         // Combobox items use virtual focus: keyboard events
                         // stay on this input, not on the highlighted option.
                         const scopeKey = highlightedProjectScopeKeyRef.current;
+                        const workgroup = scopeKey ? workgroupByScopeKey.get(scopeKey) : null;
+                        if (workgroup) {
+                          handleEditWorkgroup(event, workgroup);
+                          return;
+                        }
                         const project = scopeKey ? projectGroupByScopeKey.get(scopeKey) : null;
                         if (project) handleProjectSettings(event, project);
                       }}
@@ -4923,6 +4998,32 @@ export default function Sidebar() {
                     <ComboboxEmpty>No matching projects.</ComboboxEmpty>
                     <ComboboxList>
                       {(item: (typeof projectScopeItems)[number]) => {
+                        const workgroup = workgroupByScopeKey.get(item.value) ?? null;
+                        if (workgroup) {
+                          return (
+                            <ComboboxItem
+                              key={item.value}
+                              hideIndicator
+                              value={item}
+                              onContextMenu={(event) => handleEditWorkgroup(event, workgroup)}
+                            >
+                              <LayersIcon className="size-4 shrink-0" />
+                              <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                              <Button
+                                size="icon-xs"
+                                variant="ghost-muted"
+                                tabIndex={-1}
+                                aria-hidden="true"
+                                title={`Edit workgroup ${workgroup.name}`}
+                                className="ml-auto"
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => handleEditWorkgroup(event, workgroup)}
+                              >
+                                <SettingsIcon className="size-3.5" />
+                              </Button>
+                            </ComboboxItem>
+                          );
+                        }
                         const project = projectGroupByScopeKey.get(item.value) ?? null;
                         return (
                           <ComboboxItem
@@ -4966,6 +5067,17 @@ export default function Sidebar() {
                         );
                       }}
                     </ComboboxList>
+                    <div className="border-t p-1">
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        className="w-full justify-start"
+                        onClick={(event) => handleEditWorkgroup(event, null)}
+                      >
+                        <PlusIcon className="size-3.5" />
+                        New workgroup
+                      </Button>
+                    </div>
                   </ComboboxPopup>
                 </Combobox>
               }
@@ -5414,6 +5526,8 @@ export default function Sidebar() {
                     Add project
                   </button>
                 </>
+              ) : scopedWorkgroup ? (
+                `No threads in ${scopedWorkgroup.name} yet`
               ) : scopedProjectGroup ? (
                 `No threads in ${scopedProjectGroup.displayName} yet`
               ) : (
@@ -5424,6 +5538,28 @@ export default function Sidebar() {
         </SidebarGroup>
       </SidebarContent>
       <SidebarChromeFooter />
+      {workgroupDialog ? (
+        <SidebarWorkgroupDialog
+          workgroup={workgroupDialog.workgroup}
+          projects={projectGroups}
+          projectBadge={
+            showProjectEnvironments
+              ? (project) => (
+                  <ProjectEnvironmentBadge
+                    group={project}
+                    primaryEnvironmentId={primaryEnvironmentId}
+                    machineByEnvironmentId={environmentMachineById}
+                  />
+                )
+              : undefined
+          }
+          onSaved={(workgroupId) => {
+            setWorkgroupDialog(null);
+            setProjectScopeKey(sidebarWorkgroupScopeKey(workgroupId));
+          }}
+          onClose={() => setWorkgroupDialog(null)}
+        />
+      ) : null}
     </>
   );
 }

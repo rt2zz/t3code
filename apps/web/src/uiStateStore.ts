@@ -28,6 +28,7 @@ export interface PersistedUiState {
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
   sidebarProjectScopeKey?: string | null;
+  sidebarWorkgroups?: unknown;
   threadChangedFilesExpansionVersion?: number;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   pullRequestMergeMethod?: string;
@@ -40,6 +41,28 @@ export interface UiProjectState {
   // projects". Lives here so routes that unmount the sidebar (Settings)
   // cannot reset the filter.
   sidebarProjectScopeKey: string | null;
+  // Named sets of logical project keys. Selecting one scopes the sidebar to
+  // all of its projects; the scope key is `sidebarWorkgroupScopeKey(id)`.
+  sidebarWorkgroups: SidebarWorkgroup[];
+}
+
+export interface SidebarWorkgroup {
+  readonly id: string;
+  readonly name: string;
+  readonly projectKeys: readonly string[];
+}
+
+const SIDEBAR_WORKGROUP_SCOPE_PREFIX = "workgroup:";
+
+export function sidebarWorkgroupScopeKey(workgroupId: string): string {
+  return `${SIDEBAR_WORKGROUP_SCOPE_PREFIX}${workgroupId}`;
+}
+
+/** The workgroup id a sidebar scope key selects, or null for project scopes. */
+export function sidebarWorkgroupIdFromScopeKey(scopeKey: string | null): string | null {
+  return scopeKey?.startsWith(SIDEBAR_WORKGROUP_SCOPE_PREFIX)
+    ? scopeKey.slice(SIDEBAR_WORKGROUP_SCOPE_PREFIX.length)
+    : null;
 }
 
 export interface UiThreadState {
@@ -62,6 +85,7 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   sidebarProjectScopeKey: null,
+  sidebarWorkgroups: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -100,6 +124,23 @@ function sanitizeBooleanRecord(value: unknown): Record<string, boolean> {
 
 function sanitizeOptionalKey(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function sanitizeSidebarWorkgroups(value: unknown): SidebarWorkgroup[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const workgroups: SidebarWorkgroup[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const { id, name, projectKeys } = entry as Record<string, unknown>;
+    if (typeof id !== "string" || id.length === 0 || seen.has(id)) continue;
+    if (typeof name !== "string" || name.trim().length === 0) continue;
+    seen.add(id);
+    workgroups.push({ id, name: name.trim(), projectKeys: sanitizeStringArray(projectKeys) });
+  }
+  return workgroups;
 }
 
 function sanitizeTimestampRecord(value: unknown): Record<string, string> {
@@ -155,6 +196,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
         : {},
     defaultAdvertisedEndpointKey: sanitizeOptionalKey(parsed.defaultAdvertisedEndpointKey),
     sidebarProjectScopeKey: sanitizeOptionalKey(parsed.sidebarProjectScopeKey),
+    sidebarWorkgroups: sanitizeSidebarWorkgroups(parsed.sidebarWorkgroups),
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
       ? parsed.pullRequestMergeMethod
       : initialState.pullRequestMergeMethod,
@@ -229,6 +271,7 @@ export function persistState(state: UiState): void {
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         sidebarProjectScopeKey: state.sidebarProjectScopeKey,
+        sidebarWorkgroups: state.sidebarWorkgroups,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
         pullRequestMergeMethod: state.pullRequestMergeMethod,
@@ -340,6 +383,42 @@ export function setSidebarProjectScopeKey(state: UiState, projectKey: string | n
   };
 }
 
+/** Creates or replaces a workgroup by id. A blank name is rejected. */
+export function saveSidebarWorkgroup(state: UiState, workgroup: SidebarWorkgroup): UiState {
+  const name = workgroup.name.trim();
+  if (workgroup.id.length === 0 || name.length === 0) {
+    return state;
+  }
+  const next: SidebarWorkgroup = {
+    id: workgroup.id,
+    name,
+    projectKeys: sanitizeStringArray(workgroup.projectKeys),
+  };
+  const index = state.sidebarWorkgroups.findIndex((candidate) => candidate.id === next.id);
+  const sidebarWorkgroups = [...state.sidebarWorkgroups];
+  if (index < 0) {
+    sidebarWorkgroups.push(next);
+  } else {
+    sidebarWorkgroups[index] = next;
+  }
+  return { ...state, sidebarWorkgroups };
+}
+
+/** Removes a workgroup, returning the sidebar to all projects if it was selected. */
+export function deleteSidebarWorkgroup(state: UiState, workgroupId: string): UiState {
+  if (!state.sidebarWorkgroups.some((workgroup) => workgroup.id === workgroupId)) {
+    return state;
+  }
+  return {
+    ...state,
+    sidebarWorkgroups: state.sidebarWorkgroups.filter((workgroup) => workgroup.id !== workgroupId),
+    sidebarProjectScopeKey:
+      sidebarWorkgroupIdFromScopeKey(state.sidebarProjectScopeKey) === workgroupId
+        ? null
+        : state.sidebarProjectScopeKey,
+  };
+}
+
 function setPullRequestMergeMethod(state: UiState, method: PullRequestMergeMethod): UiState {
   return state.pullRequestMergeMethod === method
     ? state
@@ -429,6 +508,8 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
+  saveSidebarWorkgroup: (workgroup: SidebarWorkgroup) => void;
+  deleteSidebarWorkgroup: (workgroupId: string) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
@@ -450,6 +531,9 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setSidebarProjectScopeKey: (projectKey) =>
     set((state) => setSidebarProjectScopeKey(state, projectKey)),
+  saveSidebarWorkgroup: (workgroup) => set((state) => saveSidebarWorkgroup(state, workgroup)),
+  deleteSidebarWorkgroup: (workgroupId) =>
+    set((state) => deleteSidebarWorkgroup(state, workgroupId)),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),

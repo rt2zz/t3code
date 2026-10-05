@@ -11,8 +11,12 @@ import {
   persistState,
   reorderProjects,
   resolveProjectExpanded,
+  deleteSidebarWorkgroup,
+  saveSidebarWorkgroup,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  sidebarWorkgroupIdFromScopeKey,
+  sidebarWorkgroupScopeKey,
   setSidebarProjectScopeKey,
   setThreadChangedFilesExpanded,
   type UiState,
@@ -23,6 +27,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKey: null,
+    sidebarWorkgroups: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -156,6 +161,38 @@ describe("uiStateStore pure functions", () => {
     expect(setSidebarProjectScopeKey(scoped, null).sidebarProjectScopeKey).toBeNull();
     expect(setSidebarProjectScopeKey(scoped, "").sidebarProjectScopeKey).toBeNull();
   });
+
+  it("upserts workgroups and resets the scope when the selected one is deleted", () => {
+    const created = saveSidebarWorkgroup(makeUiState(), {
+      id: "wg-1",
+      name: "  Client work ",
+      projectKeys: ["github.com/a/one", "github.com/a/one", "github.com/a/two"],
+    });
+    expect(created.sidebarWorkgroups).toEqual([
+      { id: "wg-1", name: "Client work", projectKeys: ["github.com/a/one", "github.com/a/two"] },
+    ]);
+    expect(saveSidebarWorkgroup(created, { id: "wg-2", name: "  ", projectKeys: [] })).toBe(
+      created,
+    );
+
+    const renamed = saveSidebarWorkgroup(created, {
+      id: "wg-1",
+      name: "Clients",
+      projectKeys: ["github.com/a/two"],
+    });
+    expect(renamed.sidebarWorkgroups).toEqual([
+      { id: "wg-1", name: "Clients", projectKeys: ["github.com/a/two"] },
+    ]);
+
+    const scoped = setSidebarProjectScopeKey(renamed, sidebarWorkgroupScopeKey("wg-1"));
+    expect(sidebarWorkgroupIdFromScopeKey(scoped.sidebarProjectScopeKey)).toBe("wg-1");
+    expect(sidebarWorkgroupIdFromScopeKey("github.com/a/two")).toBeNull();
+
+    const deleted = deleteSidebarWorkgroup(scoped, "wg-1");
+    expect(deleted.sidebarWorkgroups).toEqual([]);
+    expect(deleted.sidebarProjectScopeKey).toBeNull();
+    expect(deleteSidebarWorkgroup(deleted, "wg-1")).toBe(deleted);
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -202,6 +239,7 @@ describe("parsePersistedState", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      sidebarWorkgroups: [],
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -324,6 +362,7 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      sidebarWorkgroups: [],
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -348,6 +387,27 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted).sidebarProjectScopeKey).toBe(
       "github.com/pingdotgg/t3code",
     );
+  });
+
+  it("restores workgroups across reloads and drops malformed entries", () => {
+    const workgroup = { id: "wg-1", name: "Clients", projectKeys: ["github.com/a/one"] };
+    persistState(makeUiState({ sidebarWorkgroups: [workgroup] }));
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(parsePersistedState(persisted).sidebarWorkgroups).toEqual([workgroup]);
+
+    expect(
+      parsePersistedState({
+        sidebarWorkgroups: [
+          workgroup,
+          { id: "wg-1", name: "Duplicate", projectKeys: [] },
+          { id: "wg-2", name: "", projectKeys: [] },
+          { id: "wg-3", name: "No keys" },
+          "nope",
+        ],
+      }).sidebarWorkgroups,
+    ).toEqual([workgroup, { id: "wg-3", name: "No keys", projectKeys: [] }]);
   });
 
   it("drops the temporary expanded-only migration fallback when rewriting state", () => {
