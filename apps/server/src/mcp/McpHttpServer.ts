@@ -20,6 +20,7 @@ import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ExternalMcpAccess from "./ExternalMcpAccess.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -147,6 +148,7 @@ const looksLikeProviderToken = (token: string) => token.length > 0 && !token.inc
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
+  const externalResolver = yield* Effect.serviceOption(ExternalMcpAccess.ExternalMcpResolver);
   return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const authorization = request.headers.authorization;
@@ -154,22 +156,31 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       authorization?.startsWith("Bearer ") === true
         ? authorization.slice("Bearer ".length).trim()
         : "";
-    const invocation =
-      (yield* registry.resolve(token)) ??
-      (Option.isSome(clients) && token.length > 0
-        ? yield* clients.value.authenticate(request)
-        : undefined);
+    // An environment bearer token plus X-T3-Thread-Id acts on that thread.
+    const external = request.headers["x-t3-thread-id"] !== undefined;
+    const invocation = external
+      ? Option.isSome(externalResolver)
+        ? yield* externalResolver.value.resolve(request)
+        : undefined
+      : ((yield* registry.resolve(token)) ??
+        (Option.isSome(clients) && token.length > 0
+          ? yield* clients.value.authenticate(request)
+          : undefined));
     if (!invocation) {
       // Without this the only symptom of a dead credential is the agent
       // quietly losing the whole `t3-code` toolkit for the rest of its
       // session, with nothing on the server to explain why.
       yield* Effect.logWarning("rejected MCP request with an unusable credential", {
-        reason: token.length === 0 ? "missing_bearer_token" : "unknown_or_expired_token",
+        reason: external
+          ? "external_access_denied"
+          : token.length === 0
+            ? "missing_bearer_token"
+            : "unknown_or_expired_token",
       });
       return unauthorized({
         request,
         presentedToken: token.length > 0,
-        offerOAuth: Option.isSome(clients) && !looksLikeProviderToken(token),
+        offerOAuth: !external && Option.isSome(clients) && !looksLikeProviderToken(token),
       });
     }
     return yield* httpEffect.pipe(

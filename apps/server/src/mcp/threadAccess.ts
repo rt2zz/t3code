@@ -120,9 +120,13 @@ export const assertTargetWithinLimits = (
  */
 export function assertLiveCaller({ caller, scope }: Caller) {
   if (caller === undefined) return Effect.void;
+  // An external client bound to a thread owns no run. Its environment session,
+  // rechecked on every request, is its authority.
+  const external = scope.thread?.providerInstanceId === "external";
   return caller.archivedAt !== null ||
-    caller.activeRunId === null ||
-    caller.providerInstanceId !== scope.thread?.providerInstanceId
+    (!external &&
+      (caller.activeRunId === null ||
+        caller.providerInstanceId !== scope.thread?.providerInstanceId))
     ? Effect.fail(
         new OrchestratorMcpFailure({
           code: "parent_not_active",
